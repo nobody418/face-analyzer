@@ -1,0 +1,92 @@
+#Librerias
+import numpy as np
+import cv2
+import PIL
+import io
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPooling2D
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+def generar_modelo():
+    from tensorflow.keras.applications import ResNet50
+    model = ResNet50(input_shape=(48,48,3),include_top=False,weights="imagenet")
+
+    for layer in model.layers[:-4]:
+        layer.trainable=False
+    
+    model = Sequential()
+    model.add(Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=(48,48,1)))
+    model.add(Conv2D(64, kernel_size=(3, 3), activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+
+    model.add(Conv2D(128, kernel_size=(3, 3), activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Conv2D(128, kernel_size=(3, 3), activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+
+    model.add(Flatten())
+    model.add(Dense(1024, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(7, activation='softmax'))
+    
+    return model
+    
+def color_emocion(indice):
+    if indice==0:
+        R,G,B=208,60,28
+    elif indice==1:
+        R,G,B=25,186,42
+    elif indice==2:
+        R,G,B=4,4,4
+    elif indice==3:
+        R,G,B=243,232,4
+    elif indice==4:
+        R,G,B=255,255,255
+    elif indice==5:
+        R,G,B=9,65,158
+    elif indice==6:
+        R,G,B=181,4,243
+    else:
+        R,G,B=255,255,255
+    
+    return (R,G,B)
+
+def porcentaje(emotion):
+    emotion=emotion*100
+    emotion=emotion.astype(int)
+    return emotion
+
+
+def predecir_emocion(model,imagen,x,y,w,h):
+    # bbox_array=np.zeros([480,640,4],dtype=np.uint8)
+    #Diccionario de emociones
+    #diccionario_emocion = {0: "Enojo", 1: "Disgusto", 2: "Miedo", 3: "Feliz", 4: "Neutral", 5: "Triste", 6: "Sorpresa"}
+    
+    imagen_prediccion = np.expand_dims(np.expand_dims(cv2.resize(imagen, (48, 48)), -1), 0)
+    prediccion = model.predict(imagen_prediccion)
+    imagen_prediccion = imagen_prediccion.astype(float)
+    imagen_prediccion /= 255
+    prediccion = model.predict(imagen_prediccion)
+    emociones = porcentaje(prediccion[0])
+    altura = y + (np.divide(h, 4.0))
+    altura = altura.astype(int)
+    
+    return altura, emociones
+    #cv2.putText(frame, diccionario_emocion[emocion], (x+20, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_emocion(emocion), 2, cv2.LINE_AA)
+
+
+##para llamar primero 
+
+#import emocion.py
+#model=emocion.generar_modelo()
+#model.load_weights('/content/drive/MyDrive/Control inteligente/Reconocimiento Emociones/model.h5') #ruta del modelo
+#emocion.predecir_emocion(model,imagen,x,y,w,h)   
+ 

@@ -1,0 +1,151 @@
+
+# Importar Librerias
+import numpy as np
+import cv2
+from listanegra import buscarenlista
+from fileinput import filename
+import sys
+import pathlib
+import re
+import tensorflow as tf
+from tensorflow import keras 
+import csv
+from tensorflow.keras.models import load_model
+from keras.applications.imagenet_utils import preprocess_input, decode_predictions
+from imutils import face_utils
+#import dlib
+from tensorflow.python.framework.ops import GraphKeys
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, Flatten
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.layers import MaxPooling2D
+
+import imutils
+import pickle
+
+# Directorios
+#directorio=str(pathlib.Path(__file__).parent.absolute()) #Obtener el directorio actual
+#directorio_global=re.sub("Reconocimiento","",directorio)  #Directorior actual
+#sys.path.append(directorio_global)   # Agregar el directorio al path
+# Importar Modelos
+directorio_modelos="Modelos"
+# Importar subprogramas.
+from Emociones import emocion
+from Liveness import liveness
+
+################# MODELOS ########################
+
+# Rutas específicas de los archivos necesarios
+Haar = directorio_modelos + "/haarcascade_frontalface_default.xml"            # Ruta del detector de rostros con el método de Viola-Jones
+#rutah5 = ruta + "/modelo_entrenado_ResNET2P(p2).h5"             # Ruta del modelo entrenado
+rutah5emociones = directorio_modelos + "/ResNet50_model.h5"             # Ruta del modelo entrenado
+rutah5 = directorio_modelos + "/modelo_entrenado_denseNET2P.h5"
+func_model=load_model(rutah5)                                   # Carga del modelo entrenado
+
+ruta= directorio_modelos                   # Ruta del directorio para la carga de archivos
+img_size=224                                                 # Tamaño de la imagen para el pre-procesamiento
+
+dict_from_csv = {}                                           # Declaración de un diccionario
+
+#with open(ruta + '/ResNET2P(p2).csv', mode='r') as inp:      # Ruta específica del archivo csv para la carga de datos
+with open(ruta + '/denseNET2P.csv', mode='r') as inp:        
+    reader = csv.reader(inp)                                 # Lectura del archivo
+    dict_from_csv = {rows[0]:rows[1] for rows in reader}     # Llenado del diccionario con los nombres de la base de datos
+
+#----------------------------------------------------
+modelo_emociones=emocion.generar_modelo()                               # Creación de modelo emociones
+modelo_emociones.load_weights(rutah5emociones) #Cargar pesos modelo emociones
+diccionario_emocion = {0: "Enojo", 1: "Disgusto", 2: "Miedo", 3: "Feliz", 4: "Neutral", 5: "Triste", 6: "Sorpresa"}
+#---------------------------------------------------
+#ruta_liveness = "/content/drive/MyDrive/Importados"
+ruta_model_liv = directorio_modelos+"/liveness_model.h5"
+ruta_le = directorio_modelos + "/le.pickle"
+model_liv = load_model(ruta_model_liv)      # Creación de modelo liveness
+le = pickle.loads(open(ruta_le,"rb").read())
+
+
+################## PROGRAMA PRINCIPAL ########################
+
+# Inicialización del modelo de detección facial Haar Cascade 
+face_cascade = cv2.CascadeClassifier(cv2.samples.findFile(cv2.data.haarcascades + 
+                                                          'haarcascade_frontalface_default.xml'))
+#Diccionario de emociones
+diccionario_emocion = {0: "Enojo", 1: "Disgusto", 2: "Miedo", 3: "Feliz", 4: "Neutral", 5: "Triste", 6: "Sorpresa"}
+# Evita el uso de openCL y mensajes innecesarios de opencv
+cv2.ocl.setUseOpenCL(False)
+# Camara web
+cap= cv2.VideoCapture(0)
+
+bbox=""
+count=0
+size = 1
+
+
+while True:
+    ret, frame = cap.read() 
+    if not ret:
+        break
+    
+    bbox_array=np.zeros([480,640,4],dtype=np.uint8)
+    # grayscale image for face detection
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    mini = cv2.resize(gray, (int(gray.shape[1] / size), int(gray.shape[0] / size)))
+    # get face region coordinates
+    faces = face_cascade.detectMultiScale(mini)
+    faces = sorted(faces, key=lambda x: x[3])
+    # get face bounding box for overlay
+    
+    if faces: # Para reconocimiento de un rostro a la vez por cuadro
+    #for i in range(len(faces)): # Para reconocimiento de varios rostros a la vez por cuadro
+      face_i = faces[0]
+     # face_i = faces[i]
+      (x, y, w, h) = [v * size for v in face_i]
+      roi_gray    = gray[y:y + h, x:x + w]
+      roi_gray1   = tf.keras.utils.img_to_array(roi_gray)
+      face_resize = cv2.resize(roi_gray, (img_size,img_size))
+      
+      # Predicir emoción
+      altura, emociones = emocion.predecir_emocion(modelo_emociones,roi_gray1,x,y,w,h)
+
+      cropped_img = np.array(face_resize).reshape(-1, img_size, img_size, 1)
+      cropped_img = np.repeat(cropped_img, 3, axis=-1)
+      #cropped_img = cropped_img/255.0
+      prediction = func_model.predict(cropped_img)
+      p = prediction.flatten()
+      maxindex = int(np.argmax(prediction))
+      #acc = func_model.compute_metrics(cropped_img, maxindex, maxindex)
+      #print(acc)
+      
+      if p[maxindex] > 0.7 :
+            if buscarenlista(dict_from_csv[str(maxindex)])==True:
+                bbox_array = cv2.rectangle(frame,(x,y),(x+w,y+h),(0,0,255),2)
+                cv2.putText(frame, "Desconocido", (x, y+h+10), 
+                       cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255))
+            else:    
+                bbox_array = cv2.rectangle(frame,(x,y),(x+w,y+h),(0,255,0),2)
+                cv2.putText(frame, dict_from_csv[str(maxindex)] + " %"+str(p[maxindex]), 
+                            (x, y+h+10), cv2.FONT_HERSHEY_PLAIN, 1, (0, 255, 0))
+      else:
+           bbox_array = cv2.rectangle(frame,(x,y),(x+w,y+h),(0,0,255),2)
+           cv2.putText(frame, "Desconocido", (x, y+h+10), 
+                       cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255))
+                       
+      # Imprimir expresiones faciales
+      for i in range(7):
+      	    cv2.putText(frame, diccionario_emocion[i]+'='+str(emociones[i]), (x+w, altura+(i*15)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, emocion.color_emocion(i), 2, cv2.LINE_AA)
+          
+      # Detectar Liveness
+      label = liveness.detectar_liveness(model_liv,le,frame,x,y,w,h)
+      cv2.putText(frame, label, (x+5, y-30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2) 
+      
+    cv2.imshow('Video', cv2.resize(frame,(480,350)))
+    if cv2.waitKey(1) & 0xFF == ord ('q'):
+         break
+         
+cap.release()
+cv2.destroyAllWindows()
+
+
+
